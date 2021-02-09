@@ -24,6 +24,7 @@ pxr_plugin(usdMtlx
         ${MATERIALX_INCLUDE_DIRS}
 
     CPPFILES
+        debugCodes.cpp
         discovery.cpp
         parser.cpp
 
@@ -35,6 +36,7 @@ pxr_plugin(usdMtlx
 
     PRIVATE_HEADERS
         api.h
+	debugCodes.h
 
     PYTHON_CPPFILES
         moduleDeps.cpp
@@ -48,6 +50,9 @@ pxr_plugin(usdMtlx
 
     RESOURCE_FILES
         plugInfo.json
+
+    DOXYGEN_FILES
+        overview.dox
 )
 
 pxr_test_scripts(

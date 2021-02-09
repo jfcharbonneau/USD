@@ -25,6 +25,7 @@
 
 from pxr import Usd
 from pxr import UsdAppUtils
+from pxr import Tf
 
 import argparse
 import os
@@ -82,10 +83,18 @@ def main():
             'spaces or quote the argument and separate paths by commas and/or '
             'spaces.'))
 
+    parser.add_argument('--purposes', action='store', type=str,
+        dest='purposes', metavar='PURPOSE[,PURPOSE...]', default='proxy',
+        help=(
+            'Specify which UsdGeomImageable purposes should be included '
+            'in the renders.  The "default" purpose is automatically included, '
+            'so you need specify only the *additional* purposes.  If you want '
+            'more than one extra purpose, either use commas with no spaces or '
+            'quote the argument and separate purposes by commas and/or spaces.'))
+
     UsdAppUtils.cameraArgs.AddCmdlineArgs(parser)
     UsdAppUtils.framesArgs.AddCmdlineArgs(parser)
-    UsdAppUtils.complexityArgs.AddCmdlineArgs(parser,
-        defaultValue=UsdAppUtils.complexityArgs.RefinementComplexities.HIGH)
+    UsdAppUtils.complexityArgs.AddCmdlineArgs(parser)
     UsdAppUtils.colorArgs.AddCmdlineArgs(parser)
     UsdAppUtils.rendererArgs.AddCmdlineArgs(parser)
 
@@ -101,6 +110,8 @@ def main():
         frameFormatArgName='outputImagePath')
 
     args.imageWidth = max(args.imageWidth, 1)
+
+    purposes = args.purposes.replace(',', ' ').split()
 
     # Open the USD stage, using a population mask if paths were given.
     if args.populationMask:
@@ -132,6 +143,7 @@ def main():
     frameRecorder.SetImageWidth(args.imageWidth)
     frameRecorder.SetComplexity(args.complexity.value)
     frameRecorder.SetColorCorrectionMode(args.colorCorrectionMode)
+    frameRecorder.SetIncludedPurposes(purposes)
 
     _Msg('Camera: %s' % usdCamera.GetPath().pathString)
     _Msg('Renderer plugin: %s' % frameRecorder.GetCurrentRendererId())
@@ -139,7 +151,13 @@ def main():
     for timeCode in args.frames:
         _Msg('Recording time code: %s' % timeCode)
         outputImagePath = args.outputImagePath.format(frame=timeCode.GetValue())
-        frameRecorder.Record(usdStage, usdCamera, timeCode, outputImagePath)
+        try:
+            frameRecorder.Record(usdStage, usdCamera, timeCode, outputImagePath)
+        except Tf.ErrorException as e:
+
+            _Err("Recording aborted due to the following failure at time code "
+                 "{0}: {1}".format(timeCode, str(e)))
+            break
 
     # Release our reference to the frame recorder so it can be deleted before
     # the Qt stuff.

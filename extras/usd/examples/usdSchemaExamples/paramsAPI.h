@@ -58,8 +58,13 @@ class UsdSchemaExamplesParamsAPI : public UsdAPISchemaBase
 public:
     /// Compile time constant representing what kind of schema this class is.
     ///
-    /// \sa UsdSchemaType
-    static const UsdSchemaType schemaType = UsdSchemaType::SingleApplyAPI;
+    /// \sa UsdSchemaKind
+    static const UsdSchemaKind schemaKind = UsdSchemaKind::SingleApplyAPI;
+
+    /// \deprecated
+    /// Same as schemaKind, provided to maintain temporary backward 
+    /// compatibility with older generated schemas.
+    static const UsdSchemaKind schemaType = UsdSchemaKind::SingleApplyAPI;
 
     /// Construct a UsdSchemaExamplesParamsAPI on UsdPrim \p prim .
     /// Equivalent to UsdSchemaExamplesParamsAPI::Get(prim.GetStage(), prim.GetPath())
@@ -109,22 +114,30 @@ public:
     /// 
     /// \return A valid UsdSchemaExamplesParamsAPI object is returned upon success. 
     /// An invalid (or empty) UsdSchemaExamplesParamsAPI object is returned upon 
-    /// failure. See \ref UsdAPISchemaBase::_ApplyAPISchema() for conditions 
+    /// failure. See \ref UsdPrim::ApplyAPI() for conditions 
     /// resulting in failure. 
     /// 
     /// \sa UsdPrim::GetAppliedSchemas()
     /// \sa UsdPrim::HasAPI()
+    /// \sa UsdPrim::ApplyAPI()
+    /// \sa UsdPrim::RemoveAPI()
     ///
     USDSCHEMAEXAMPLES_API
     static UsdSchemaExamplesParamsAPI 
     Apply(const UsdPrim &prim);
 
 protected:
-    /// Returns the type of schema this class belongs to.
+    /// Returns the kind of schema this class belongs to.
     ///
-    /// \sa UsdSchemaType
+    /// \sa UsdSchemaKind
     USDSCHEMAEXAMPLES_API
-    UsdSchemaType _GetSchemaType() const override;
+    UsdSchemaKind _GetSchemaKind() const override;
+
+    /// \deprecated
+    /// Same as _GetSchemaKind, provided to maintain temporary backward 
+    /// compatibility with older generated schemas.
+    USDSCHEMAEXAMPLES_API
+    UsdSchemaKind _GetSchemaType() const override;
 
 private:
     // needs to invoke _GetStaticTfType.
@@ -144,10 +157,11 @@ public:
     // --------------------------------------------------------------------- //
     /// Double value denoting mass
     ///
-    /// \n  C++ Type: double
-    /// \n  Usd Type: SdfValueTypeNames->Double
-    /// \n  Variability: SdfVariabilityVarying
-    /// \n  Fallback Value: No Fallback
+    /// | ||
+    /// | -- | -- |
+    /// | Declaration | `double params:mass` |
+    /// | C++ Type | double |
+    /// | \ref Usd_Datatypes "Usd Type" | SdfValueTypeNames->Double |
     USDSCHEMAEXAMPLES_API
     UsdAttribute GetMassAttr() const;
 
@@ -165,10 +179,11 @@ public:
     // --------------------------------------------------------------------- //
     /// Double value denoting velocity
     ///
-    /// \n  C++ Type: double
-    /// \n  Usd Type: SdfValueTypeNames->Double
-    /// \n  Variability: SdfVariabilityVarying
-    /// \n  Fallback Value: No Fallback
+    /// | ||
+    /// | -- | -- |
+    /// | Declaration | `double params:velocity` |
+    /// | C++ Type | double |
+    /// | \ref Usd_Datatypes "Usd Type" | SdfValueTypeNames->Double |
     USDSCHEMAEXAMPLES_API
     UsdAttribute GetVelocityAttr() const;
 
@@ -186,10 +201,11 @@ public:
     // --------------------------------------------------------------------- //
     /// Double value denoting volume
     ///
-    /// \n  C++ Type: double
-    /// \n  Usd Type: SdfValueTypeNames->Double
-    /// \n  Variability: SdfVariabilityVarying
-    /// \n  Fallback Value: No Fallback
+    /// | ||
+    /// | -- | -- |
+    /// | Declaration | `double params:volume` |
+    /// | C++ Type | double |
+    /// | \ref Usd_Datatypes "Usd Type" | SdfValueTypeNames->Double |
     USDSCHEMAEXAMPLES_API
     UsdAttribute GetVolumeAttr() const;
 

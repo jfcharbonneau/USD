@@ -1,5 +1,5 @@
 //
-// Copyright 2018 Pixar
+// Copyright 2018-2019 Pixar
 //
 // Licensed under the Apache License, Version 2.0 (the "Apache License")
 // with the following modification; you may not use this file except in
@@ -22,8 +22,9 @@
 // language governing permissions and limitations under the Apache License.
 //
 #include "pxr/pxr.h"
-#include "pxr/usd/usdMtlx/reader.h"
-#include "pxr/usd/usdMtlx/utils.h"
+#include "pxr/usd/plugin/usdMtlx/debugCodes.h"
+#include "pxr/usd/plugin/usdMtlx/reader.h"
+#include "pxr/usd/plugin/usdMtlx/utils.h"
 
 #include "pxr/usd/usdGeom/primvar.h"
 #include "pxr/usd/usdGeom/primvarsAPI.h"
@@ -138,7 +139,6 @@ static const _AttributeNames names;
 TF_DEFINE_PRIVATE_TOKENS(
     tokens,
 
-    ((defaultOutputName, "result"))
     ((light, "light"))
 );
 
@@ -196,17 +196,9 @@ _Children(const std::shared_ptr<T>& mtlx, const std::string& category)
 // that becomes important later.
 class _Attr {
 public:
-    _Attr() = default;
-    explicit _Attr(const std::string& value)
-        : _value(value.empty() ? mx::EMPTY_STRING : value) { }
     template <typename T>
     _Attr(const std::shared_ptr<T>& element, const std::string& name)
         : _Attr(element->getAttribute(name)) { }
-    _Attr(const _Attr&) = default;
-    _Attr(_Attr&&) = default;
-    _Attr& operator=(const _Attr&) = default;
-    _Attr& operator=(_Attr&&) = default;
-    ~_Attr() = default;
 
     explicit operator bool() const      { return !_value.empty(); }
     bool operator!() const              { return _value.empty(); }
@@ -216,6 +208,10 @@ public:
 
     std::string::const_iterator begin() const { return _value.begin(); }
     std::string::const_iterator end()   const { return _value.end(); }
+
+private:
+    explicit _Attr(const std::string& value)
+        : _value(value.empty() ? mx::EMPTY_STRING : value) { }
 
 private:
     const std::string& _value = mx::EMPTY_STRING;
@@ -384,6 +380,25 @@ _FindMatchingNodeDef(
                                 mtlxInterface->getTarget());
 }
 
+// Get the nodeDef either from the mtlxNode itself or get it from the stdlib.
+// For custom nodedefs defined in the loaded mtlx document one should be able to
+// get the nodeDef from the node, for all other instances corresponding nodeDefs
+// need to be accessed from the stdlib.
+static
+mx::ConstNodeDefPtr
+_GetNodeDef(const mx::ConstNodePtr& mtlxNode)
+{
+    mx::ConstNodeDefPtr mtlxNodeDef = mtlxNode->getNodeDef();
+
+    if (mtlxNodeDef) {
+        return mtlxNodeDef;
+    }
+
+    return _FindMatchingNodeDef(mtlxNode, mtlxNode->getCategory(), 
+                                UsdMtlxGetVersion(mtlxNode),
+                                mtlxNode->getTarget());
+}
+
 // Get the shader id for a MaterialX nodedef.
 static
 NdrIdentifier
@@ -398,10 +413,7 @@ static
 NdrIdentifier
 _GetShaderId(const mx::ConstNodePtr& mtlxNode)
 {
-    return _GetShaderId(_FindMatchingNodeDef(mtlxNode,
-                                             mtlxNode->getCategory(),
-                                             UsdMtlxGetVersion(mtlxNode),
-                                             mtlxNode->getTarget()));
+    return _GetShaderId(_GetNodeDef(mtlxNode));
 }
 
 // Copy the value from a Material value element to a UsdShadeInput with a
@@ -768,18 +780,16 @@ _NodeGraphBuilder::_AddNode(
     // We deliberately ignore tokens here.
 
     // Add the outputs.
-    if (_Type(mtlxNode) == mx::MULTI_OUTPUT_TYPE_STRING) {
-        if (auto mtlxNodeDef = mtlxNode->getNodeDef()) {
-            for (auto i: _GetInheritanceStack(mtlxNodeDef)) {
-                for (auto mtlxOutput: i->getOutputs()) {
-                    _AddOutput(mtlxOutput, mtlxNode, connectable);
-                }
+    if (auto mtlxNodeDef = _GetNodeDef(mtlxNode)) {
+        for (auto i: _GetInheritanceStack(mtlxNodeDef)) {
+            for (auto mtlxOutput: i->getOutputs()) {
+                _AddOutput(mtlxOutput, mtlxNode, connectable);
             }
         }
     }
     else {
-        // Default output.
-        _AddOutput(mtlxNode, mtlxNode, connectable);
+        // Do not add any (default) output to the usd node if the mtlxNode
+        // is missing a corresponding mtlxNodeDef.
     }
 }
 
@@ -881,22 +891,13 @@ _NodeGraphBuilder::_AddOutput(
         }
     }
 
-    // Choose the output name.  If mtlxTyped is-a Output then we use the
-    // output name, otherwise we use the default.
-    const auto isAnOutput = mtlxTyped->isA<mx::Output>();
-    const auto outputName =
-        isAnOutput
-            ? _MakeName(mtlxTyped)
-            : tokens->defaultOutputName;
+    const auto outputName = _MakeName(mtlxTyped);
 
     // Get the node name.
     auto& nodeName = _Name(mtlxOwner);
 
-    // Compute a key for finding this output.  Since we'll access this
-    // table with the node name and optionally the output name for a
-    // multioutput node, it's easiest to always have an output name
-    // but make it empty for default outputs.
-    auto key = nodeName + "." + (isAnOutput ? outputName.GetText() : "");
+    // Compute a key for finding this output.
+    auto key = nodeName;
 
     auto result =
         _outputs[key] = connectable.CreateOutput(outputName, usdType);
@@ -914,8 +915,7 @@ _NodeGraphBuilder::_ConnectPorts(
     const D& usdDownstream)
 {
     if (auto nodeName = _Attr(mtlxDownstream, names.nodename)) {
-        auto i = _outputs.find(nodeName.str() + "." +
-                               _Attr(mtlxDownstream, names.output).str());
+        auto i = _outputs.find(nodeName.str());
         if (i == _outputs.end()) {
             TF_WARN("Output for <%s> missing",
                     usdDownstream.GetAttr().GetPath().GetText());
@@ -1044,7 +1044,7 @@ _NodeGraph::GetOutputByName(const std::string& name) const
                 : UsdShadeShader::Get(_usdOwnerPrim.GetStage(),
                                       _referencer.AppendChild(i->second));
         if (child) {
-            return child.GetOutput(tokens->defaultOutputName);
+            return child.GetOutput(UsdMtlxTokens->DefaultOutputName);
         }
     }
 
@@ -1066,9 +1066,14 @@ _NodeGraph::AddReference(const SdfPath& referencingPath) const
         }
 
         // Something other than a node graph already exists.
-        TF_WARN("Can't create node graph at <%s>; a '%s' already exists",
-                referencingPath.GetText(), prim.GetTypeName().GetText());
-        return _NodeGraph();
+        // If it has a type, ignore it. 
+        // Otherwise still add the reference for the implicit 
+        // node graph case
+        if (!prim.GetTypeName().IsEmpty()) {
+            TF_WARN("Can't create node graph at <%s>; a '%s' already exists",
+                    referencingPath.GetText(), prim.GetTypeName().GetText());
+            return _NodeGraph();
+        }
     }
 
     // Create a new prim referencing the node graph.
@@ -1247,10 +1252,15 @@ _Context::_AddNodeGraph(
         // getting nodes and outputs at the document scope and we
         // don't make a USD nodegraph.
         if (mtlxNodeGraph) {
+            TF_DEBUG(USDMTLX_READER).Msg("Add node graph: %s at path %s\n", 
+                                         mtlxNodeGraph->getName().c_str(),
+                                         _nodeGraphsPath.GetString().c_str());
             builder.SetContainer(mtlxNodeGraph);
             builder.SetTarget(_stage, _nodeGraphsPath, mtlxNodeGraph);
         }
         else {
+            TF_DEBUG(USDMTLX_READER).Msg("Add implicit node graph at path %s\n", 
+                    _nodeGraphsPath.GetString().c_str());
             builder.SetContainer(mtlxDocument);
             builder.SetTarget(_stage, _nodeGraphsPath);
         }
@@ -1266,6 +1276,8 @@ _Context::AddNodeGraphWithDef(const mx::ConstNodeGraphPtr& mtlxNodeGraph)
     auto& nodeGraph = _nodeGraphs[mtlxNodeGraph];
     if (!nodeGraph && mtlxNodeGraph) {
         if (auto mtlxNodeDef = mtlxNodeGraph->getNodeDef()) {
+            TF_DEBUG(USDMTLX_READER).Msg("Add mtlxNodeDef %s\n", 
+                                         mtlxNodeDef->getName().c_str());
             _NodeGraphBuilder builder;
             builder.SetInterface(mtlxNodeDef);
             builder.SetContainer(mtlxNodeGraph);
@@ -1366,6 +1378,9 @@ _Context::AddShaderRef(const mx::ConstShaderRefPtr& mtlxShaderRef)
         // Do nothing
     }
     else if ((usdShaderImpl = UsdShadeShader::Define(_stage, shaderImplPath))) {
+        TF_DEBUG(USDMTLX_READER).Msg("Created shader mtlx %s, as usd %s\n",
+                                     mtlxNodeDef->getName().c_str(),
+                                     name.GetString().c_str());
         usdShaderImpl.CreateIdAttr(VtValue(TfToken(shaderId)));
         auto connectable = usdShaderImpl.ConnectableAPI();
         _SetCoreUIAttributes(usdShaderImpl.GetPrim(), mtlxShaderRef);
@@ -1384,13 +1399,8 @@ _Context::AddShaderRef(const mx::ConstShaderRefPtr& mtlxShaderRef)
 
             // Create USD output(s) for each MaterialX output with
             // semantic="shader".
-            if (_Type(mtlxNodeDef) == mx::MULTI_OUTPUT_TYPE_STRING) {
-                for (auto mtlxOutput: i->getOutputs()) {
-                    _AddShaderOutput(mtlxOutput, connectable);
-                }
-            }
-            else {
-                _AddShaderOutput(i, connectable);
+            for (auto mtlxOutput: i->getOutputs()) {
+                _AddShaderOutput(mtlxOutput, connectable);
             }
         }
     }
@@ -1557,27 +1567,6 @@ _Context::AddMaterialVariant(
     usdVariantSet.ClearVariantSelection();
 }
 
-bool
-_Context::_AddShaderVariant(
-    const std::string& mtlxMaterialName,
-    const std::string& mtlxShaderRefName,
-    const Variant& variant)
-{
-    // Find the USD shader.
-    auto usdShader = _shaders[mtlxMaterialName][mtlxShaderRefName];
-    if (!usdShader) {
-        // Unknown shader.
-        return false;
-    }
-
-    // Copy the values.
-    for (auto& nameAndValue: variant) {
-        auto& mtlxValue = nameAndValue.second;
-        _CopyValue(_MakeInput(usdShader, mtlxValue), mtlxValue);
-    }
-    return true;
-}
-
 UsdCollectionAPI
 _Context::AddCollection(const mx::ConstCollectionPtr& mtlxCollection)
 {
@@ -1629,8 +1618,7 @@ _Context::_AddCollection(
     // Create the collection.
     auto& usdCollection =
         _collections[_Name(mtlxCollection)] =
-            UsdCollectionAPI::ApplyCollection(usdPrim,
-                                    _MakeName(mtlxCollection));
+            UsdCollectionAPI::Apply(usdPrim, _MakeName(mtlxCollection));
     _SetCoreUIAttributes(usdCollection.CreateIncludesRel(), mtlxCollection);
 
     // Add the included collections (recursively creating them if necessary)
@@ -1700,8 +1688,7 @@ _Context::_AddGeomExpr(const mx::ConstGeomElementPtr& mtlxGeomElement)
     // Create the collection.
     auto& usdCollection =
         i.first->second =
-            UsdCollectionAPI::ApplyCollection(usdPrim,
-                                    TfToken(name + std::to_string(k)));
+            UsdCollectionAPI::Apply(usdPrim, TfToken(name + std::to_string(k)));
 
     // Add the geometry expressions.
     auto& geomprefix = mtlxGeomElement->getActiveGeomPrefix();
@@ -1793,6 +1780,9 @@ _Context::_BindNodeGraph(
     auto referencingPath =
         referencingPathParent.AppendChild(
             usdNodeGraph.GetOwnerPrim().GetPath().GetNameToken());
+    TF_DEBUG(USDMTLX_READER).Msg("_BindNodeGraph %s %s\n",
+                                 mtlxBindInput->getName().c_str(),
+                                 referencingPath.GetString().c_str());
     auto refNodeGraph = usdNodeGraph.AddReference(referencingPath);
     if (!refNodeGraph) {
         return;
@@ -1851,6 +1841,9 @@ _Context::_AddShaderOutput(
             }
         }
     }
+    TF_DEBUG(USDMTLX_READER).Msg("Add shader output %s of type %s\n",
+                                 mtlxTyped->getName().c_str(),
+                                 type.c_str());
     if (context == "surface" || type == mx::SURFACE_SHADER_TYPE_STRING) {
         return connectable.CreateOutput(UsdShadeTokens->surface,
                                         SdfValueTypeNames->Token);
@@ -2291,6 +2284,8 @@ ReadNodeGraphsWithDefs(mx::ConstDocumentPtr mtlx, _Context& context)
 {
     // Translate nodegraphs with nodedefs.
     for (auto& mtlxNodeGraph: mtlx->getNodeGraphs()) {
+        TF_DEBUG(USDMTLX_READER).Msg("Read node graph %s\n",
+                                     mtlxNodeGraph->getName().c_str() );
         context.AddNodeGraphWithDef(mtlxNodeGraph);
     }
 }
@@ -2328,10 +2323,14 @@ ReadMaterials(mx::ConstDocumentPtr mtlx, _Context& context)
 {
     for (auto& mtlxMaterial: mtlx->getMaterials()) {
         // Translate material.
+        TF_DEBUG(USDMTLX_READER).Msg("Adding mtlxMaterial '%s'\n",
+                                     _Name(mtlxMaterial).c_str());
         if (auto usdMaterial = context.BeginMaterial(mtlxMaterial)) {
             // Translate all shader references.
             for (auto mtlxShaderRef: mtlxMaterial->getShaderRefs()) {
                 // Translate shader reference.
+                TF_DEBUG(USDMTLX_READER).Msg("Adding shaderref '%s'\n",
+                                             _Name(mtlxShaderRef).c_str());
                 if (auto usdShader = context.AddShaderRef(mtlxShaderRef)) {
                     // Do nothing.
                 }
@@ -2369,6 +2368,10 @@ ReadMaterials(mx::ConstDocumentPtr mtlx, _Context& context)
                 if (auto usdInherited = context.GetMaterial(name)) {
                     usdMaterial.GetPrim().GetSpecializes()
                         .AddSpecialize(usdInherited.GetPath());
+                    TF_DEBUG(USDMTLX_READER).Msg("Material '%s' inherit from "
+                                                 " '%s'\n",
+                                                 _Name(mtlxMaterial).c_str(),
+                                                 name.c_str());
                 }
                 else {
                     TF_WARN("Material '%s' attempted to inherit from "
@@ -2497,7 +2500,7 @@ ReadLook(
     }
 
     // Make an object for binding materials.
-    auto binding = UsdShadeMaterialBindingAPI(root);
+    auto binding = UsdShadeMaterialBindingAPI::Apply(root);
 
     // Get the current (inherited) property order.
     const auto inheritedOrder = root.GetPropertyOrder();
